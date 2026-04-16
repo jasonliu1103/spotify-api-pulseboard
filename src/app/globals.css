@@ -1,26 +1,101 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3ecdf;
+  --foreground: #171410;
+  --muted: #60584c;
+  --card: rgba(255, 250, 243, 0.72);
+  --line: rgba(23, 20, 16, 0.1);
+  --accent: #9ce565;
+  --accent-ink: #17360b;
+  --accent-strong: #188543;
+  --font-sans-family: "Avenir Next", "Helvetica Neue", sans-serif;
+  --font-mono-family: "SF Mono", "Menlo", monospace;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-sans-family);
+  --font-mono: var(--font-mono-family);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(29, 185, 84, 0.2), transparent 32%),
+    radial-gradient(circle at 84% 16%, rgba(242, 171, 62, 0.18), transparent 22%),
+    linear-gradient(180deg, #fffdf8 0%, #f4eee2 42%, #ede4d4 100%);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans-family);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(23, 20, 16, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 20, 16, 0.04) 1px, transparent 1px);
+  background-size: 30px 30px;
+  mask-image: radial-gradient(circle at center, black 38%, transparent 100%);
+  opacity: 0.45;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(156, 229, 101, 0.46);
+  color: var(--foreground);
+}
+
+.glass-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(31, 27, 23, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+.reveal {
+  animation: rise 0.8s ease-out both;
+}
+
+.float-card {
+  animation: rise 0.8s ease-out both, hover-float 7s ease-in-out 1s infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes hover-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
 }

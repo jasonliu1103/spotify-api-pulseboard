@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Pulseboard
 
-## Getting Started
+Portfolio starter for a full-stack Spotify analytics dashboard with scheduled data syncs, SQL-backed historical insights, and AI playlist generation.
 
-First, run the development server:
+## Status
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+This repository currently ships the first public-facing foundation:
+
+- A `Next.js + TypeScript` app scaffold
+- A polished landing page that frames the product direction
+- Planning docs for architecture, roadmap, and database design
+- An `.env.example` for Spotify, Postgres, and AI integrations
+
+The Spotify OAuth flow, ingestion jobs, database layer, and analytics queries are the next implementation milestone.
+
+## Product Direction
+
+Pulseboard is meant to become a music intelligence app that:
+
+- Connects to Spotify with OAuth
+- Periodically syncs user and playlist data into Postgres
+- Visualizes listening trends over time
+- Generates playlists from a natural-language prompt plus actual user taste data
+
+This scope is strong for a portfolio because it combines product engineering, database design, background jobs, analytics, and applied AI in one coherent project.
+
+## Planned Stack
+
+- `Next.js` and `TypeScript` for the app
+- `Postgres` and `Prisma` for relational storage and historical snapshots
+- Spotify Web API for user, library, and playlist data
+- A background job/cron layer for recurring syncs
+- An LLM integration for prompt-driven playlist generation
+
+## Current Structure
+
+```text
+src/
+  app/         Next.js routes and layout
+  components/  Presentational UI
+  jobs/        Background sync entry points
+  lib/         Shared DB, Spotify, AI, and utility code
+  server/      Server-side business logic
+  types/       Shared TypeScript types
+prisma/
+  schema.prisma
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local Development
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open `http://localhost:3000`.
 
-## Learn More
+## Local Postgres
 
-To learn more about Next.js, take a look at the following resources:
+This repo is configured for a local Postgres database named `pulseboard`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+If you are using Homebrew PostgreSQL locally, the connection string shape is:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+DATABASE_URL=postgresql://your_user@localhost:5432/pulseboard?schema=public
+```
 
-## Deploy on Vercel
+In this workspace, a local `.env` file has already been created for the current machine.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run dev` starts the development server
+- `npm run build` creates a production build
+- `npm run lint` runs ESLint
+- `npm run typecheck` runs the TypeScript compiler without emitting files
+- `npm run db:format` formats the Prisma schema
+- `npm run db:generate` generates the Prisma client
+- `npm run db:push` pushes the Prisma schema to a Postgres database
+- `npm run db:studio` opens Prisma Studio
+
+## Docs
+
+- [Architecture](docs/architecture.md)
+- [Roadmap](docs/roadmap.md)
+- [Schema Draft](docs/schema.md)
+
+## Resume Framing
+
+When the MVP is complete, this project should support bullets like:
+
+- Built a full-stack Spotify analytics platform with scheduled ingestion jobs, a Postgres data model, and an AI-assisted playlist generator
+- Designed a relational schema and snapshot pipeline to analyze music preferences, playlist behavior, and listening trends over time
+- Developed a responsive dashboard that turned third-party API data into actionable user-facing insights
