@@ -58,7 +58,7 @@ export function SyncButton() {
         type="button"
         onClick={handleSync}
         disabled={isSyncing}
-        className="inline-flex items-center justify-center rounded-full bg-[var(--accent)] px-5 py-2 text-sm font-medium text-[var(--accent-ink)] disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex items-center justify-center rounded-full bg-accent px-5 py-2 text-sm font-medium text-accent-ink disabled:cursor-not-allowed disabled:opacity-70"
       >
         {isSyncing ? "Syncing..." : "Sync now"}
       </button>

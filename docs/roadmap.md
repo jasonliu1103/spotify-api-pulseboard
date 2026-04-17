@@ -27,20 +27,22 @@
 
 - [x] Add the relational schema (users, accounts, artists, albums, tracks, playlists, snapshots, saved tracks, sync runs)
 - [x] Store historical snapshots of ranked and playlist data (`UserTopArtistSnapshot`, `UserTopTrackSnapshot`, `PlaylistSnapshot`, `PlaylistTrackSnapshot`)
-- [ ] Build queries for top artists, top tracks, genre mix, repeat rate, and discovery rate
-- [ ] Create a first dashboard page with filters and time windows
+- [x] Build queries for top artists, top tracks, genre mix (`src/server/analytics/overview.ts`)
+- [ ] Build repeat rate and discovery rate queries (require 2+ snapshots — defer until cron seeds history)
+- [x] Create a first dashboard page with filters and time windows (`src/app/dashboard/page.tsx`)
 
-## Phase 3: Analytics Dashboard (next)
+## Phase 3: Analytics Dashboard
 
 Render the data already being synced. No new Spotify calls required for the MVP.
 
-- [ ] Top artists view with short/medium/long time-range toggle
-- [ ] Top tracks view with the same time-range toggle
-- [ ] Genre mix breakdown aggregated from artist genres
-- [ ] Saved tracks count + recent saves list
-- [ ] Playlist list (names, track counts, public/private)
-- [ ] Sync status card (last run, records written, errors)
-- [ ] Read via Prisma in server components in `src/app/dashboard/`
+- [x] Top artists view with short/medium/long time-range toggle
+- [x] Top tracks view with the same time-range toggle
+- [x] Genre mix breakdown aggregated from artist genres
+- [x] Recent saves list (saved tracks count still surfaced via sync status)
+- [x] Playlist list (names, track counts, public/private)
+- [x] Sync status card (last run, records written, errors)
+- [x] Read via Prisma in server components in `src/app/dashboard/`
+- [ ] Repeat rate + discovery rate (unlock once cron produces multiple snapshots)
 
 ## Phase 4: AI Playlist Generation
 

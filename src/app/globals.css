@@ -1,21 +1,49 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #f3ecdf;
   --foreground: #171410;
   --muted: #60584c;
-  --card: rgba(255, 250, 243, 0.72);
+  --surface: rgba(255, 251, 244, 0.74);
+  --surface-muted: rgba(255, 251, 244, 0.5);
+  --surface-strong: rgba(255, 255, 255, 0.82);
   --line: rgba(23, 20, 16, 0.1);
+  --overlay-soft: rgba(23, 20, 16, 0.08);
+  --overlay-faint: rgba(23, 20, 16, 0.05);
   --accent: #9ce565;
-  --accent-ink: #17360b;
+  --accent-ink: #000000;
   --accent-strong: #188543;
+  --selection-bg: rgba(156, 229, 101, 0.46);
+  --panel-shadow: 0 24px 70px rgba(31, 27, 23, 0.08);
   --font-sans-family: "Avenir Next", "Helvetica Neue", sans-serif;
   --font-mono-family: "SF Mono", "Menlo", monospace;
+}
+
+html.dark {
+  --background: #0c0f0d;
+  --foreground: #ecf1ee;
+  --muted: #8c958f;
+  --surface: rgba(28, 34, 31, 0.72);
+  --surface-muted: rgba(24, 30, 27, 0.5);
+  --surface-strong: rgba(40, 48, 44, 0.88);
+  --line: rgba(255, 255, 255, 0.1);
+  --overlay-soft: rgba(255, 255, 255, 0.08);
+  --overlay-faint: rgba(255, 255, 255, 0.05);
+  --accent: #9ce565;
+  --accent-ink: #000000;
+  --accent-strong: #7ed87a;
+  --selection-bg: rgba(156, 229, 101, 0.32);
+  --panel-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-strong: var(--accent-strong);
   --font-sans: var(--font-sans-family);
   --font-mono: var(--font-mono-family);
 }
@@ -26,6 +54,12 @@
 
 html {
   scroll-behavior: smooth;
+  background: var(--background);
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 body {
@@ -36,6 +70,13 @@ body {
     linear-gradient(180deg, #fffdf8 0%, #f4eee2 42%, #ede4d4 100%);
   color: var(--foreground);
   font-family: var(--font-sans-family);
+}
+
+html.dark body {
+  background:
+    radial-gradient(circle at top left, rgba(29, 185, 84, 0.18), transparent 36%),
+    radial-gradient(circle at 84% 16%, rgba(72, 120, 90, 0.16), transparent 26%),
+    linear-gradient(180deg, #0f1411 0%, #0b100d 48%, #070a08 100%);
 }
 
 body::before {
@@ -52,20 +93,29 @@ body::before {
   opacity: 0.45;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+html.dark body::before {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  opacity: 0.55;
+}
+
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 }
 
 ::selection {
-  background: rgba(156, 229, 101, 0.46);
+  background: var(--selection-bg);
   color: var(--foreground);
 }
 
 .glass-panel {
-  background: var(--card);
+  background: var(--surface);
   border: 1px solid var(--line);
-  box-shadow: 0 24px 70px rgba(31, 27, 23, 0.08);
+  box-shadow: var(--panel-shadow);
   backdrop-filter: blur(18px);
 }
 

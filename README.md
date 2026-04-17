@@ -55,6 +55,12 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+To override the default host or port on either Windows or macOS, set `HOST` and
+`PORT` in your shell before running `npm run dev`.
+
+`npm install` also runs `prisma generate` automatically so the Prisma client is
+ready after a fresh clone on either machine.
+
 ## Local Postgres
 
 This repo is configured for a local Postgres database named `pulseboard`.
