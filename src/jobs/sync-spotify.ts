@@ -92,13 +92,17 @@ interface SpotifyPlaylistTrackItem {
 
 async function upsertArtist(artist: SpotifyArtistFull | SpotifyArtistLite) {
   const full = artist as SpotifyArtistFull;
+  const hasGenres = full.genres !== undefined;
+  const hasImages = full.images !== undefined;
+  const hasPopularity = full.popularity !== undefined;
+
   return prisma.artist.upsert({
     where: { spotifyArtistId: artist.id },
     update: {
       name: artist.name,
-      genres: full.genres ?? [],
-      imageUrl: full.images?.[0]?.url ?? null,
-      popularity: full.popularity ?? null,
+      ...(hasGenres ? { genres: full.genres ?? [] } : {}),
+      ...(hasImages ? { imageUrl: full.images?.[0]?.url ?? null } : {}),
+      ...(hasPopularity ? { popularity: full.popularity ?? null } : {}),
     },
     create: {
       spotifyArtistId: artist.id,

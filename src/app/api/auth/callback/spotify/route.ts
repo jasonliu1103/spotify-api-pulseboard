@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
+import { originFromRequest } from "@/lib/origin";
 import {
   exchangeSpotifyCode,
   fetchCurrentSpotifyUser,
@@ -8,13 +9,6 @@ import {
 import { setSessionCookie } from "@/server/auth/session";
 
 const OAUTH_STATE_COOKIE = "pulseboard_oauth_state";
-
-function originFromRequest(request: NextRequest) {
-  const host = request.headers.get("host") ?? request.nextUrl.host;
-  const proto =
-    request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
-  return `${proto}://${host}`;
-}
 
 function errorRedirect(request: NextRequest, reason: string) {
   const url = new URL("/", originFromRequest(request));
@@ -82,7 +76,9 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const response = NextResponse.redirect(new URL("/dashboard", originFromRequest(request)));
+  const response = NextResponse.redirect(
+    new URL("/dashboard", originFromRequest(request)),
+  );
   response.cookies.delete(OAUTH_STATE_COOKIE);
   setSessionCookie(response, user.id);
 

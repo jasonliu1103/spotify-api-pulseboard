@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { runUserSync } from "@/jobs/sync-spotify";
+import { originFromRequest } from "@/lib/origin";
 import { getSessionUserId } from "@/server/auth/session";
 
 export async function POST(request: NextRequest) {
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest) {
 
   const acceptsHtml = request.headers.get("accept")?.includes("text/html");
   if (acceptsHtml) {
-    return NextResponse.redirect(new URL("/dashboard", request.url), {
+    return NextResponse.redirect(new URL("/dashboard", originFromRequest(request)), {
       status: 303,
     });
   }
