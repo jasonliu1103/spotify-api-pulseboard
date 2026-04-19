@@ -5,6 +5,7 @@ import { getValidAccessToken } from "@/server/auth/spotify";
 
 const SAVED_TRACKS_CAP = 500;
 const TOP_ITEMS_LIMIT = 50;
+const RECENTLY_PLAYED_LIMIT = 50;
 
 const TIME_RANGES: { api: string; db: SpotifyTimeRange }[] = [
   { api: "short_term", db: SpotifyTimeRange.SHORT_TERM },
@@ -23,13 +24,18 @@ export function startSyncRun({ jobName, userId }: StartSyncRunInput) {
   });
 }
 
-export function finishSyncRun(runId: string, recordsWritten: number) {
+export function finishSyncRun(
+  runId: string,
+  recordsWritten: number,
+  stepCounts: Record<string, number>,
+) {
   return prisma.syncRun.update({
     where: { id: runId },
     data: {
       status: SyncRunStatus.SUCCEEDED,
       finishedAt: new Date(),
       recordsWritten,
+      stepCounts,
     },
   });
 }
@@ -88,6 +94,11 @@ interface SpotifySavedTrack {
 interface SpotifyPlaylistTrackItem {
   added_at: string | null;
   track: SpotifyTrack | null;
+}
+interface SpotifyRecentlyPlayedItem {
+  played_at: string;
+  track: SpotifyTrack | null;
+  context: { type?: string | null; uri?: string | null } | null;
 }
 
 async function upsertArtist(artist: SpotifyArtistFull | SpotifyArtistLite) {
@@ -350,6 +361,51 @@ async function syncPlaylists(
   return written;
 }
 
+async function syncRecentlyPlayed(
+  userId: string,
+  accessToken: string,
+): Promise<number> {
+  const latest = await prisma.recentlyPlayedEvent.findFirst({
+    where: { userId },
+    orderBy: { playedAt: "desc" },
+    select: { playedAt: true },
+  });
+
+  const searchParams: Record<string, string | number | undefined> = {
+    limit: RECENTLY_PLAYED_LIMIT,
+  };
+  if (latest) {
+    searchParams.after = latest.playedAt.getTime();
+  }
+
+  const res = await spotifyFetch<{ items: SpotifyRecentlyPlayedItem[] }>({
+    accessToken,
+    path: "/me/player/recently-played",
+    searchParams,
+  });
+
+  let written = 0;
+  for (const item of res.items) {
+    if (!item.track) continue;
+    const track = await upsertTrack(item.track);
+    const playedAt = new Date(item.played_at);
+    const result = await prisma.recentlyPlayedEvent.createMany({
+      data: [
+        {
+          userId,
+          trackId: track.id,
+          playedAt,
+          contextType: item.context?.type ?? null,
+          contextUri: item.context?.uri ?? null,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    written += result.count;
+  }
+  return written;
+}
+
 export async function runUserSync(userId: string): Promise<{
   runId: string;
   status: SyncRunStatus;
@@ -359,6 +415,7 @@ export async function runUserSync(userId: string): Promise<{
   const run = await startSyncRun({ jobName: "user_full_sync", userId });
   const snapshotAt = new Date();
   const errors: string[] = [];
+  const stepCounts: Record<string, number> = {};
   let recordsWritten = 0;
 
   const accessToken = await getValidAccessToken(userId);
@@ -367,21 +424,25 @@ export async function runUserSync(userId: string): Promise<{
     { name: "topArtists", fn: () => syncTopArtists(userId, accessToken, snapshotAt) },
     { name: "topTracks", fn: () => syncTopTracks(userId, accessToken, snapshotAt) },
     { name: "savedTracks", fn: () => syncSavedTracks(userId, accessToken) },
-    { name: "playlists", fn: () => syncPlaylists(userId, accessToken, snapshotAt) },
+    { name: "playlistTracks", fn: () => syncPlaylists(userId, accessToken, snapshotAt) },
+    { name: "recentlyPlayed", fn: () => syncRecentlyPlayed(userId, accessToken) },
   ];
 
   for (const step of steps) {
     try {
-      recordsWritten += await step.fn();
+      const count = await step.fn();
+      stepCounts[step.name] = count;
+      recordsWritten += count;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);
       errors.push(`${step.name}: ${message}`);
+      stepCounts[step.name] = 0;
     }
   }
 
   if (errors.length === 0) {
-    await finishSyncRun(run.id, recordsWritten);
+    await finishSyncRun(run.id, recordsWritten, stepCounts);
     return {
       runId: run.id,
       status: SyncRunStatus.SUCCEEDED,
@@ -396,6 +457,7 @@ export async function runUserSync(userId: string): Promise<{
       status: SyncRunStatus.FAILED,
       finishedAt: new Date(),
       recordsWritten,
+      stepCounts,
       errorMessage: errors.join("\n"),
     },
   });

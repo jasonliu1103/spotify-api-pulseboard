@@ -1,15 +1,16 @@
 import { redirect } from "next/navigation";
+import { CurrentlyPlayingCard } from "@/components/dashboard/currently-playing-card";
 import { SyncButton } from "@/components/dashboard/sync-button";
 import {
   TimeRangeTabs,
-  parseTimeRange,
+  parseDashboardWindow,
 } from "@/components/dashboard/time-range-tabs";
 import { prisma } from "@/lib/db/prisma";
 import { getSessionUserId } from "@/server/auth/session";
 import {
-  getGenreMix,
   getPlaylists,
   getRecentSaves,
+  getRecentlyPlayed,
   getTopArtists,
   getTopTracks,
 } from "@/server/analytics/overview";
@@ -32,17 +33,17 @@ export default async function DashboardPage({
   if (!user) redirect("/");
 
   const params = await searchParams;
-  const timeRange = parseTimeRange(params.range);
+  const activeWindow = parseDashboardWindow(params.range);
 
-  const [lastRun, topArtists, topTracks, genreMix, recentSaves, playlists] =
+  const [lastRun, topArtists, topTracks, recentlyPlayed, recentSaves, playlists] =
     await Promise.all([
       prisma.syncRun.findFirst({
         where: { userId, jobName: "user_full_sync" },
         orderBy: { startedAt: "desc" },
       }),
-      getTopArtists(userId, timeRange, 12),
-      getTopTracks(userId, timeRange, 10),
-      getGenreMix(userId, timeRange, 8),
+      getTopArtists(userId, activeWindow, 12),
+      getTopTracks(userId, activeWindow, 10),
+      getRecentlyPlayed(userId, 8),
       getRecentSaves(userId, 8),
       getPlaylists(userId, 12),
     ]);
@@ -67,7 +68,7 @@ export default async function DashboardPage({
 
       <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-6">
         <div className="flex items-center justify-between gap-4">
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold">Spotify data</h2>
             <p className="text-sm text-[var(--muted)]">
               {lastRun
@@ -78,6 +79,17 @@ export default async function DashboardPage({
                   }`
                 : "No sync yet."}
             </p>
+            {lastRun?.stepCounts ? (
+              <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-[var(--muted)]">
+                {Object.entries(
+                  lastRun.stepCounts as Record<string, number>,
+                ).map(([name, count]) => (
+                  <li key={name}>
+                    {name}: <span className="text-[var(--foreground)]">{count}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {lastRun?.status === "FAILED" && lastRun.errorMessage && (
               <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-[var(--overlay-faint)] p-2 text-xs text-red-700">
                 {lastRun.errorMessage}
@@ -87,6 +99,8 @@ export default async function DashboardPage({
           <SyncButton />
         </div>
       </section>
+
+      <CurrentlyPlayingCard />
 
       {!hasData ? (
         <section className="rounded-2xl border border-dashed border-[var(--line)] bg-[var(--surface-muted)] p-10 text-center">
@@ -101,13 +115,13 @@ export default async function DashboardPage({
             <h2 className="text-sm font-mono uppercase tracking-[0.3em] text-[var(--muted)]">
               Listening window
             </h2>
-            <TimeRangeTabs active={timeRange} />
+            <TimeRangeTabs active={activeWindow} />
           </div>
 
           <TopArtistsSection artists={topArtists} />
           <TopTracksSection tracks={topTracks} />
           <div className="grid gap-6 lg:grid-cols-2">
-            <GenreMixSection mix={genreMix} />
+            <RecentlyPlayedSection recentlyPlayed={recentlyPlayed} />
             <RecentSavesSection saves={recentSaves} />
           </div>
           <PlaylistsSection playlists={playlists} />
@@ -252,43 +266,49 @@ function TopTracksSection({
   );
 }
 
-function GenreMixSection({
-  mix,
+function RecentlyPlayedSection({
+  recentlyPlayed,
 }: {
-  mix: Awaited<ReturnType<typeof getGenreMix>>;
+  recentlyPlayed: Awaited<ReturnType<typeof getRecentlyPlayed>>;
 }) {
-  if (mix.length === 0) {
+  if (recentlyPlayed.length === 0) {
     return (
-      <SectionCard title="Genre mix">
-        <p className="text-sm text-[var(--muted)]">No genres yet.</p>
+      <SectionCard title="Recently played">
+        <p className="text-sm text-[var(--muted)]">
+          No plays captured yet. The sync job ingests new plays every 30 min.
+        </p>
       </SectionCard>
     );
   }
 
-  const max = mix[0].count;
-
   return (
-    <SectionCard title="Genre mix">
+    <SectionCard title="Recently played">
       <ul className="flex flex-col gap-2">
-        {mix.map((row) => {
-          const pct = Math.max(6, Math.round((row.count / max) * 100));
-          return (
-            <li key={row.genre} className="flex flex-col gap-1">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="truncate text-sm">{row.genre}</span>
-                <span className="font-mono text-xs text-[var(--muted)]">
-                  {row.count}
-                </span>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--overlay-faint)]">
-                <div
-                  className="h-full rounded-full bg-[var(--accent-strong)]"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </li>
-          );
-        })}
+        {recentlyPlayed.map((play) => (
+          <li key={play.id} className="flex items-center gap-3">
+            {play.albumImageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={play.albumImageUrl}
+                alt=""
+                width={32}
+                height={32}
+                className="h-8 w-8 rounded object-cover"
+              />
+            ) : (
+              <div className="h-8 w-8 rounded bg-[var(--overlay-soft)]" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm">{play.name}</p>
+              <p className="truncate text-xs text-[var(--muted)]">
+                {play.artists.map((a) => a.name).join(", ")}
+              </p>
+            </div>
+            <span className="font-mono text-xs text-[var(--muted)]">
+              {formatRelativeTime(play.playedAt)}
+            </span>
+          </li>
+        ))}
       </ul>
     </SectionCard>
   );
@@ -386,6 +406,18 @@ function formatDuration(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function formatRelativeTime(date: Date): string {
+  const diffMs = Date.now() - date.getTime();
+  const min = Math.round(diffMs / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const days = Math.round(hr / 24);
+  if (days < 30) return `${days}d ago`;
+  return date.toLocaleDateString();
 }
 
 function formatRelativeDate(date: Date): string {

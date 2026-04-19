@@ -1,5 +1,16 @@
 import { SpotifyTimeRange } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import type { DashboardWindow } from "@/components/dashboard/time-range-tabs";
+
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+function sevenDaysAgo(): Date {
+  return new Date(Date.now() - SEVEN_DAYS_MS);
+}
+
+function isSpotifyRange(window: DashboardWindow): window is SpotifyTimeRange {
+  return window !== "last_7_days";
+}
 
 export async function getLatestSnapshotAt(
   userId: string,
@@ -13,10 +24,10 @@ export async function getLatestSnapshotAt(
   return row?.snapshotAt ?? null;
 }
 
-export async function getTopArtists(
+async function getTopArtistsFromSnapshots(
   userId: string,
   timeRange: SpotifyTimeRange,
-  limit = 20,
+  limit: number,
 ) {
   const snapshotAt = await getLatestSnapshotAt(userId, timeRange);
   if (!snapshotAt) return [];
@@ -39,10 +50,59 @@ export async function getTopArtists(
   }));
 }
 
-export async function getTopTracks(
+async function getTopArtistsFromEvents(userId: string, limit: number) {
+  const events = await prisma.recentlyPlayedEvent.findMany({
+    where: { userId, playedAt: { gte: sevenDaysAgo() } },
+    select: {
+      track: {
+        select: {
+          artists: {
+            orderBy: { position: "asc" },
+            select: { artist: true },
+          },
+        },
+      },
+    },
+  });
+
+  const counts = new Map<string, { plays: number; artist: typeof events[number]["track"]["artists"][number]["artist"] }>();
+  for (const event of events) {
+    for (const ta of event.track.artists) {
+      const existing = counts.get(ta.artist.id);
+      if (existing) existing.plays += 1;
+      else counts.set(ta.artist.id, { plays: 1, artist: ta.artist });
+    }
+  }
+
+  return [...counts.values()]
+    .sort((a, b) => b.plays - a.plays)
+    .slice(0, limit)
+    .map((entry, i) => ({
+      rank: i + 1,
+      id: entry.artist.id,
+      spotifyArtistId: entry.artist.spotifyArtistId,
+      name: entry.artist.name,
+      imageUrl: entry.artist.imageUrl,
+      genres: entry.artist.genres,
+      popularity: entry.artist.popularity,
+    }));
+}
+
+export async function getTopArtists(
+  userId: string,
+  window: DashboardWindow,
+  limit = 20,
+) {
+  if (isSpotifyRange(window)) {
+    return getTopArtistsFromSnapshots(userId, window, limit);
+  }
+  return getTopArtistsFromEvents(userId, limit);
+}
+
+async function getTopTracksFromSnapshots(
   userId: string,
   timeRange: SpotifyTimeRange,
-  limit = 20,
+  limit: number,
 ) {
   const snapshotAt = await prisma.userTopTrackSnapshot
     .findFirst({
@@ -85,30 +145,59 @@ export async function getTopTracks(
   }));
 }
 
-export async function getGenreMix(
-  userId: string,
-  timeRange: SpotifyTimeRange,
-  limit = 10,
-): Promise<{ genre: string; count: number }[]> {
-  const snapshotAt = await getLatestSnapshotAt(userId, timeRange);
-  if (!snapshotAt) return [];
-
-  const rows = await prisma.userTopArtistSnapshot.findMany({
-    where: { userId, timeRange, snapshotAt },
-    include: { artist: { select: { genres: true } } },
+async function getTopTracksFromEvents(userId: string, limit: number) {
+  const grouped = await prisma.recentlyPlayedEvent.groupBy({
+    by: ["trackId"],
+    where: { userId, playedAt: { gte: sevenDaysAgo() } },
+    _count: { trackId: true },
+    orderBy: { _count: { trackId: "desc" } },
+    take: limit,
   });
 
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    for (const genre of row.artist.genres) {
-      counts.set(genre, (counts.get(genre) ?? 0) + 1);
-    }
-  }
+  if (grouped.length === 0) return [];
 
-  return [...counts.entries()]
-    .map(([genre, count]) => ({ genre, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
+  const tracks = await prisma.track.findMany({
+    where: { id: { in: grouped.map((g) => g.trackId) } },
+    include: {
+      album: true,
+      artists: {
+        orderBy: { position: "asc" },
+        include: { artist: true },
+      },
+    },
+  });
+  const byId = new Map(tracks.map((t) => [t.id, t]));
+
+  return grouped
+    .map((g, i) => {
+      const track = byId.get(g.trackId);
+      if (!track) return null;
+      return {
+        rank: i + 1,
+        id: track.id,
+        spotifyTrackId: track.spotifyTrackId,
+        name: track.name,
+        durationMs: track.durationMs,
+        albumName: track.album?.name ?? null,
+        albumImageUrl: track.album?.imageUrl ?? null,
+        artists: track.artists.map((ta) => ({
+          id: ta.artist.id,
+          name: ta.artist.name,
+        })),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+}
+
+export async function getTopTracks(
+  userId: string,
+  window: DashboardWindow,
+  limit = 20,
+) {
+  if (isSpotifyRange(window)) {
+    return getTopTracksFromSnapshots(userId, window, limit);
+  }
+  return getTopTracksFromEvents(userId, limit);
 }
 
 export async function getRecentSaves(userId: string, limit = 10) {
@@ -142,6 +231,37 @@ export async function getRecentSaves(userId: string, limit = 10) {
   }));
 }
 
+export async function getRecentlyPlayed(userId: string, limit = 10) {
+  const rows = await prisma.recentlyPlayedEvent.findMany({
+    where: { userId },
+    orderBy: { playedAt: "desc" },
+    take: limit,
+    include: {
+      track: {
+        include: {
+          album: true,
+          artists: {
+            orderBy: { position: "asc" },
+            include: { artist: true },
+          },
+        },
+      },
+    },
+  });
+
+  return rows.map((row) => ({
+    id: row.id,
+    playedAt: row.playedAt,
+    trackId: row.track.id,
+    name: row.track.name,
+    albumImageUrl: row.track.album?.imageUrl ?? null,
+    artists: row.track.artists.map((ta) => ({
+      id: ta.artist.id,
+      name: ta.artist.name,
+    })),
+  }));
+}
+
 export async function getPlaylists(userId: string, limit = 50) {
   const rows = await prisma.playlist.findMany({
     where: { userId },
@@ -158,32 +278,4 @@ export async function getPlaylists(userId: string, limit = 50) {
     },
   });
   return rows;
-}
-
-export async function getDashboardOverview(
-  userId: string,
-  timeRange: SpotifyTimeRange,
-) {
-  const [topArtistsCount, topTracksCount, savedTracksCount, playlistsCount] =
-    await prisma.$transaction([
-      prisma.userTopArtistSnapshot.count({
-        where: { userId, timeRange },
-      }),
-      prisma.userTopTrackSnapshot.count({
-        where: { userId, timeRange },
-      }),
-      prisma.savedTrack.count({
-        where: { userId },
-      }),
-      prisma.playlist.count({
-        where: { userId },
-      }),
-    ]);
-
-  return {
-    topArtistsCount,
-    topTracksCount,
-    savedTracksCount,
-    playlistsCount,
-  };
 }

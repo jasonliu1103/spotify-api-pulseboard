@@ -38,9 +38,10 @@ model User {
   playlists          Playlist[]
   topArtistSnapshots UserTopArtistSnapshot[]
   topTrackSnapshots  UserTopTrackSnapshot[]
-  savedTracks        SavedTrack[]
-  syncRuns           SyncRun[]
-  aiPlaylistRequests AiPlaylistRequest[]
+  savedTracks          SavedTrack[]
+  syncRuns             SyncRun[]
+  aiPlaylistRequests   AiPlaylistRequest[]
+  recentlyPlayedEvents RecentlyPlayedEvent[]
 }
 
 model SpotifyAccount {
@@ -97,6 +98,7 @@ model Track {
   topTrackSnapshots      UserTopTrackSnapshot[]
   savedTracks            SavedTrack[]
   playlistTrackSnapshots PlaylistTrackSnapshot[]
+  recentlyPlayedEvents   RecentlyPlayedEvent[]
 }
 
 model TrackArtist {
@@ -196,6 +198,21 @@ model SavedTrack {
   @@index([userId, savedAt])
 }
 
+model RecentlyPlayedEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  trackId     String
+  playedAt    DateTime
+  contextType String?
+  contextUri  String?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track       Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, playedAt, trackId])
+  @@index([userId, playedAt])
+}
+
 model SyncRun {
   id             String        @id @default(cuid())
   userId         String?
@@ -204,6 +221,7 @@ model SyncRun {
   startedAt      DateTime      @default(now())
   finishedAt     DateTime?
   recordsWritten Int           @default(0)
+  stepCounts     Json?
   errorMessage   String?
   user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
 

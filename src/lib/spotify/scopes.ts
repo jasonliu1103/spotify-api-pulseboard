@@ -4,8 +4,10 @@ export const spotifyScopes = [
   "playlist-read-collaborative",
   "playlist-read-private",
   "user-library-read",
+  "user-read-currently-playing",
   "user-read-email",
   "user-read-private",
+  "user-read-recently-played",
   "user-top-read",
 ] as const;
 
