@@ -6,12 +6,106 @@ import { getValidAccessToken } from "@/server/auth/spotify";
 const SAVED_TRACKS_CAP = 500;
 const TOP_ITEMS_LIMIT = 50;
 const RECENTLY_PLAYED_LIMIT = 50;
+const USER_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
+const USER_SYNC_LEASE_MS = 15 * 60 * 1000;
 
 const TIME_RANGES: { api: string; db: SpotifyTimeRange }[] = [
   { api: "short_term", db: SpotifyTimeRange.SHORT_TERM },
   { api: "medium_term", db: SpotifyTimeRange.MEDIUM_TERM },
   { api: "long_term", db: SpotifyTimeRange.LONG_TERM },
 ];
+
+export type UserSyncResult = {
+  runId: string | null;
+  status: SyncRunStatus | "SKIPPED";
+  recordsWritten: number;
+  errors: string[];
+  retryAfterSeconds?: number;
+};
+
+function secondsUntil(target: Date, now: Date) {
+  return Math.max(1, Math.ceil((target.getTime() - now.getTime()) / 1000));
+}
+
+async function acquireUserSyncLease(userId: string): Promise<
+  | { allowed: true }
+  | { allowed: false; message: string; retryAfterSeconds: number }
+> {
+  const now = new Date();
+  const cooldownCutoff = new Date(now.getTime() - USER_SYNC_COOLDOWN_MS);
+  const lockExpiresAt = new Date(now.getTime() + USER_SYNC_LEASE_MS);
+  const updated = await prisma.user.updateMany({
+    where: {
+      id: userId,
+      AND: [
+        {
+          OR: [
+            { syncLockExpiresAt: null },
+            { syncLockExpiresAt: { lte: now } },
+          ],
+        },
+        {
+          OR: [
+            { lastUserSyncStartedAt: null },
+            { lastUserSyncStartedAt: { lte: cooldownCutoff } },
+          ],
+        },
+      ],
+    },
+    data: {
+      syncLockExpiresAt: lockExpiresAt,
+      lastUserSyncStartedAt: now,
+    },
+  });
+
+  if (updated.count === 1) {
+    return { allowed: true };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      syncLockExpiresAt: true,
+      lastUserSyncStartedAt: true,
+    },
+  });
+
+  if (user?.syncLockExpiresAt && user.syncLockExpiresAt > now) {
+    const retryAfterSeconds = secondsUntil(user.syncLockExpiresAt, now);
+    return {
+      allowed: false,
+      message: `A Spotify sync is already running for this account. Try again in ${retryAfterSeconds}s.`,
+      retryAfterSeconds,
+    };
+  }
+
+  if (user?.lastUserSyncStartedAt) {
+    const retryAt = new Date(
+      user.lastUserSyncStartedAt.getTime() + USER_SYNC_COOLDOWN_MS,
+    );
+    if (retryAt > now) {
+      const retryAfterSeconds = secondsUntil(retryAt, now);
+      return {
+        allowed: false,
+        message: `Spotify sync was started recently. Try again in ${retryAfterSeconds}s.`,
+        retryAfterSeconds,
+      };
+    }
+  }
+
+  return {
+    allowed: false,
+    message: "Spotify sync is temporarily unavailable. Please try again shortly.",
+    retryAfterSeconds: Math.ceil(USER_SYNC_COOLDOWN_MS / 1000),
+  };
+}
+
+async function releaseUserSyncLease(userId: string) {
+  await prisma.user.updateMany({
+    where: { id: userId },
+    data: { syncLockExpiresAt: null },
+  });
+}
 
 interface StartSyncRunInput {
   jobName: string;
@@ -84,6 +178,7 @@ interface SpotifyPlaylist {
   name: string;
   description: string | null;
   public: boolean | null;
+  snapshot_id?: string | null;
   tracks?: { total: number };
   items?: { total: number };
 }
@@ -291,59 +386,85 @@ async function syncPlaylists(
     const trackCount = pl?.tracks?.total ?? pl?.items?.total;
     if (!pl || trackCount === undefined) continue;
     try {
-    const playlist = await prisma.playlist.upsert({
-      where: { spotifyPlaylistId: pl.id },
-      update: {
-        name: pl.name,
-        description: pl.description,
-        isPublic: pl.public,
-        trackCount,
-      },
-      create: {
-        userId,
-        spotifyPlaylistId: pl.id,
-        name: pl.name,
-        description: pl.description,
-        isPublic: pl.public,
-        trackCount,
-      },
-    });
-
-    const items = await spotifyFetchAll<SpotifyPlaylistTrackItem>({
-      accessToken,
-      path: `/playlists/${pl.id}/items`,
-      pageSize: 100,
-    });
-
-    const snapshot = await prisma.playlistSnapshot.create({
-      data: {
-        playlistId: playlist.id,
-        snapshotAt,
-        name: pl.name,
-        description: pl.description,
-        isPublic: pl.public,
-        trackCount,
-      },
-    });
-
-    const seenAtPosition = new Set<string>();
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (!item.track) continue;
-      const key = `${i}`;
-      if (seenAtPosition.has(key)) continue;
-      seenAtPosition.add(key);
-      const track = await upsertTrack(item.track);
-      await prisma.playlistTrackSnapshot.create({
-        data: {
-          playlistSnapshotId: snapshot.id,
-          trackId: track.id,
-          position: i,
-          addedAt: item.added_at ? new Date(item.added_at) : null,
+      const existing = await prisma.playlist.findUnique({
+        where: { spotifyPlaylistId: pl.id },
+        select: {
+          id: true,
+          spotifySnapshotId: true,
+          trackCount: true,
         },
       });
-      written++;
-    }
+      const playlist = await prisma.playlist.upsert({
+        where: { spotifyPlaylistId: pl.id },
+        update: {
+          name: pl.name,
+          description: pl.description,
+          isPublic: pl.public,
+          trackCount,
+        },
+        create: {
+          userId,
+          spotifyPlaylistId: pl.id,
+          name: pl.name,
+          description: pl.description,
+          isPublic: pl.public,
+          trackCount,
+        },
+      });
+
+      const shouldFetchItems =
+        !pl.snapshot_id ||
+        !existing ||
+        existing.spotifySnapshotId !== pl.snapshot_id ||
+        existing.trackCount !== trackCount;
+
+      if (!shouldFetchItems) {
+        continue;
+      }
+
+      const items = await spotifyFetchAll<SpotifyPlaylistTrackItem>({
+        accessToken,
+        path: `/playlists/${pl.id}/items`,
+        pageSize: 100,
+      });
+
+      const snapshot = await prisma.playlistSnapshot.create({
+        data: {
+          playlistId: playlist.id,
+          snapshotAt,
+          spotifySnapshotId: pl.snapshot_id ?? null,
+          name: pl.name,
+          description: pl.description,
+          isPublic: pl.public,
+          trackCount,
+        },
+      });
+
+      const seenAtPosition = new Set<string>();
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item.track) continue;
+        const key = `${i}`;
+        if (seenAtPosition.has(key)) continue;
+        seenAtPosition.add(key);
+        const track = await upsertTrack(item.track);
+        await prisma.playlistTrackSnapshot.create({
+          data: {
+            playlistSnapshotId: snapshot.id,
+            trackId: track.id,
+            position: i,
+            addedAt: item.added_at ? new Date(item.added_at) : null,
+          },
+        });
+        written++;
+      }
+
+      await prisma.playlist.update({
+        where: { id: playlist.id },
+        data: {
+          spotifySnapshotId: pl.snapshot_id ?? null,
+        },
+      });
     } catch (err: unknown) {
       if (err instanceof SpotifyApiError && err.status === 403) {
         forbiddenItemFetches++;
@@ -406,66 +527,99 @@ async function syncRecentlyPlayed(
   return written;
 }
 
-export async function runUserSync(userId: string): Promise<{
-  runId: string;
-  status: SyncRunStatus;
-  recordsWritten: number;
-  errors: string[];
-}> {
-  const run = await startSyncRun({ jobName: "user_full_sync", userId });
-  const snapshotAt = new Date();
+export async function runUserSync(userId: string): Promise<UserSyncResult> {
+  const lease = await acquireUserSyncLease(userId);
+  if (!lease.allowed) {
+    return {
+      runId: null,
+      status: "SKIPPED",
+      recordsWritten: 0,
+      errors: [lease.message],
+      retryAfterSeconds: lease.retryAfterSeconds,
+    };
+  }
+
+  let runId: string | null = null;
   const errors: string[] = [];
   const stepCounts: Record<string, number> = {};
   let recordsWritten = 0;
 
-  const accessToken = await getValidAccessToken(userId);
+  try {
+    const run = await startSyncRun({ jobName: "user_full_sync", userId });
+    runId = run.id;
+    const snapshotAt = new Date();
+    const accessToken = await getValidAccessToken(userId);
 
-  const steps: { name: string; fn: () => Promise<number> }[] = [
-    { name: "topArtists", fn: () => syncTopArtists(userId, accessToken, snapshotAt) },
-    { name: "topTracks", fn: () => syncTopTracks(userId, accessToken, snapshotAt) },
-    { name: "savedTracks", fn: () => syncSavedTracks(userId, accessToken) },
-    { name: "playlistTracks", fn: () => syncPlaylists(userId, accessToken, snapshotAt) },
-    { name: "recentlyPlayed", fn: () => syncRecentlyPlayed(userId, accessToken) },
-  ];
+    const steps: { name: string; fn: () => Promise<number> }[] = [
+      { name: "topArtists", fn: () => syncTopArtists(userId, accessToken, snapshotAt) },
+      { name: "topTracks", fn: () => syncTopTracks(userId, accessToken, snapshotAt) },
+      { name: "savedTracks", fn: () => syncSavedTracks(userId, accessToken) },
+      { name: "playlistTracks", fn: () => syncPlaylists(userId, accessToken, snapshotAt) },
+      { name: "recentlyPlayed", fn: () => syncRecentlyPlayed(userId, accessToken) },
+    ];
 
-  for (const step of steps) {
-    try {
-      const count = await step.fn();
-      stepCounts[step.name] = count;
-      recordsWritten += count;
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-      errors.push(`${step.name}: ${message}`);
-      stepCounts[step.name] = 0;
+    for (const step of steps) {
+      try {
+        const count = await step.fn();
+        stepCounts[step.name] = count;
+        recordsWritten += count;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        errors.push(`${step.name}: ${message}`);
+        stepCounts[step.name] = 0;
+      }
     }
-  }
 
-  if (errors.length === 0) {
-    await finishSyncRun(run.id, recordsWritten, stepCounts);
+    if (errors.length === 0) {
+      await finishSyncRun(run.id, recordsWritten, stepCounts);
+      return {
+        runId: run.id,
+        status: SyncRunStatus.SUCCEEDED,
+        recordsWritten,
+        errors,
+      };
+    }
+
+    await prisma.syncRun.update({
+      where: { id: run.id },
+      data: {
+        status: SyncRunStatus.FAILED,
+        finishedAt: new Date(),
+        recordsWritten,
+        stepCounts,
+        errorMessage: errors.join("\n"),
+      },
+    });
+
     return {
       runId: run.id,
-      status: SyncRunStatus.SUCCEEDED,
+      status: SyncRunStatus.FAILED,
       recordsWritten,
       errors,
     };
-  }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (runId) {
+      await prisma.syncRun.update({
+        where: { id: runId },
+        data: {
+          status: SyncRunStatus.FAILED,
+          finishedAt: new Date(),
+          recordsWritten,
+          stepCounts,
+          errorMessage: message,
+        },
+      });
+    }
 
-  await prisma.syncRun.update({
-    where: { id: run.id },
-    data: {
+    return {
+      runId,
       status: SyncRunStatus.FAILED,
-      finishedAt: new Date(),
       recordsWritten,
-      stepCounts,
-      errorMessage: errors.join("\n"),
-    },
-  });
-
-  return {
-    runId: run.id,
-    status: SyncRunStatus.FAILED,
-    recordsWritten,
-    errors,
-  };
+      errors: [message],
+    };
+  } finally {
+    await releaseUserSyncLease(userId);
+  }
 }

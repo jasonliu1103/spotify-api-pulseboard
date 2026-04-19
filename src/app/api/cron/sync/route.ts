@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
     status: string;
     recordsWritten: number;
     errors: string[];
+    retryAfterSeconds?: number;
   }> = [];
 
   for (const { userId } of accounts) {
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest) {
         status: result.status,
         recordsWritten: result.recordsWritten,
         errors: result.errors,
+        retryAfterSeconds: result.retryAfterSeconds,
       });
     } catch (error) {
       results.push({

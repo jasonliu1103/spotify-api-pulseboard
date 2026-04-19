@@ -43,8 +43,11 @@ export async function spotifyFetch<T>({
     });
 
     if (response.status === 429) {
-      const retryAfter = Number(response.headers.get("retry-after") ?? "1");
-      const waitMs = Math.min(Math.max(retryAfter, 1), 10) * 1000;
+      const retryAfter = Number.parseInt(
+        response.headers.get("retry-after") ?? "1",
+        10,
+      );
+      const waitMs = (Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 1) * 1000;
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       continue;
     }

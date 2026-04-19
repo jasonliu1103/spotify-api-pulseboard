@@ -34,6 +34,8 @@ model User {
   avatarUrl          String?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
+  syncLockExpiresAt  DateTime?
+  lastUserSyncStartedAt DateTime?
   spotifyAccount     SpotifyAccount?
   playlists          Playlist[]
   topArtistSnapshots UserTopArtistSnapshot[]
@@ -146,6 +148,7 @@ model Playlist {
   id                String             @id @default(cuid())
   userId            String
   spotifyPlaylistId String             @unique
+  spotifySnapshotId String?
   name              String
   description       String?
   isPublic          Boolean?
@@ -162,6 +165,7 @@ model PlaylistSnapshot {
   id          String                  @id @default(cuid())
   playlistId  String
   snapshotAt  DateTime
+  spotifySnapshotId String?
   name        String
   description String?
   isPublic    Boolean?
