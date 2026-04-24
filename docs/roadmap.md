@@ -21,7 +21,6 @@
 ### Known limitations carried forward
 - Playlist `/items` fetches return 403 under Spotify Dev Mode; handler counts and skips. Resolved only by Extended Quota Mode approval.
 - Access/refresh tokens stored plaintext in Postgres — fine for single-user portfolio; must encrypt at rest before multi-user deploy.
-- No `prisma migrate` history yet (schema pushed via `db push`). Establish a baseline migration before Phase 9 deploy.
 
 ## Phase 2: Database and Analytics
 
@@ -49,7 +48,7 @@ Foundation for everything downstream. Spotify's top-items API only exposes ~4w /
 - [x] Build recently-played ingestion job against `/me/player/recently-played` (cursor-based, 50 items per call, dedupe via `createMany({ skipDuplicates: true })`)
 - [x] Wire Vercel Cron to run top-items snapshot + recently-played ingestion on a schedule (every 30 min via `/api/cron/sync`)
 - [x] Extend `SyncRun` with per-job counts (`stepCounts` JSON) so the sync-status card can report each stream separately
-- [ ] Baseline `prisma migrate` before enabling cron in production
+- [x] Baseline `prisma migrate` (`prisma/migrations/0_init/migration.sql`, marked applied via `migrate resolve`); added `db:migrate` / `db:deploy` scripts
 
 ## Phase 5: Event-Driven Analytics
 
