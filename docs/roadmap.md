@@ -55,9 +55,9 @@ Foundation for everything downstream. Spotify's top-items API only exposes ~4w /
 Unlocks once Phase 4 has seeded at least a few days of event history.
 
 - [x] Add "Last 7 days" option to `TimeRangeTabs`, sourced from `RecentlyPlayedEvent` rather than top-items snapshots
-- [ ] Repeat rate (share of plays for tracks heard in a prior window)
-- [ ] Discovery rate (new artists / tracks vs prior window)
-- [ ] Delta indicators on existing tiles (vs previous period)
+- [x] Repeat rate (share of plays for tracks heard in a prior window)
+- [x] Discovery rate (new artists / tracks vs prior window)
+- [x] Delta indicators on existing tiles (vs previous period)
 
 ## Phase 6: Spotlight Tile Views
 

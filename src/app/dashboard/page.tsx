@@ -8,9 +8,11 @@ import {
 import { prisma } from "@/lib/db/prisma";
 import { getSessionUserId } from "@/server/auth/session";
 import {
+  getDiscoveryRate,
   getPlaylists,
   getRecentSaves,
   getRecentlyPlayed,
+  getRepeatRate,
   getTopArtists,
   getTopTracks,
 } from "@/server/analytics/overview";
@@ -35,18 +37,28 @@ export default async function DashboardPage({
   const params = await searchParams;
   const activeWindow = parseDashboardWindow(params.range);
 
-  const [lastRun, topArtists, topTracks, recentlyPlayed, recentSaves, playlists] =
-    await Promise.all([
-      prisma.syncRun.findFirst({
-        where: { userId, jobName: "user_full_sync" },
-        orderBy: { startedAt: "desc" },
-      }),
-      getTopArtists(userId, activeWindow, 12),
-      getTopTracks(userId, activeWindow, 10),
-      getRecentlyPlayed(userId, 8),
-      getRecentSaves(userId, 8),
-      getPlaylists(userId, 12),
-    ]);
+  const [
+    lastRun,
+    topArtists,
+    topTracks,
+    recentlyPlayed,
+    recentSaves,
+    playlists,
+    repeatRate,
+    discoveryRate,
+  ] = await Promise.all([
+    prisma.syncRun.findFirst({
+      where: { userId, jobName: "user_full_sync" },
+      orderBy: { startedAt: "desc" },
+    }),
+    getTopArtists(userId, activeWindow, 12),
+    getTopTracks(userId, activeWindow, 10),
+    getRecentlyPlayed(userId, 8),
+    getRecentSaves(userId, 8),
+    getPlaylists(userId, 12),
+    getRepeatRate(userId),
+    getDiscoveryRate(userId),
+  ]);
 
   const hasData = topArtists.length > 0 || topTracks.length > 0;
 
@@ -118,6 +130,10 @@ export default async function DashboardPage({
             <TimeRangeTabs active={activeWindow} />
           </div>
 
+          <div className="grid gap-6 sm:grid-cols-2">
+            <RepeatRateCard repeatRate={repeatRate} />
+            <DiscoveryRateCard discoveryRate={discoveryRate} />
+          </div>
           <TopArtistsSection artists={topArtists} />
           <TopTracksSection tracks={topTracks} />
           <div className="grid gap-6 lg:grid-cols-2">
@@ -182,9 +198,12 @@ function TopArtistsSection({
             key={artist.id}
             className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3"
           >
-            <span className="font-mono text-xs text-[var(--muted)]">
-              {String(artist.rank).padStart(2, "0")}
-            </span>
+            <div className="flex flex-col items-center">
+              <span className="font-mono text-xs text-[var(--muted)]">
+                {String(artist.rank).padStart(2, "0")}
+              </span>
+              <RankDelta rank={artist.rank} previousRank={artist.previousRank} />
+            </div>
             {artist.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -235,9 +254,12 @@ function TopTracksSection({
             key={track.id}
             className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-3"
           >
-            <span className="w-6 font-mono text-xs text-[var(--muted)]">
-              {String(track.rank).padStart(2, "0")}
-            </span>
+            <div className="flex w-8 flex-col items-center">
+              <span className="font-mono text-xs text-[var(--muted)]">
+                {String(track.rank).padStart(2, "0")}
+              </span>
+              <RankDelta rank={track.rank} previousRank={track.previousRank} />
+            </div>
             {track.albumImageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -397,6 +419,100 @@ function PlaylistsSection({
           </li>
         ))}
       </ul>
+    </SectionCard>
+  );
+}
+
+function RankDelta({
+  rank,
+  previousRank,
+}: {
+  rank: number;
+  previousRank: number | null;
+}) {
+  if (previousRank === null) {
+    return <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400">NEW</span>;
+  }
+  const diff = previousRank - rank;
+  if (diff === 0) {
+    return <span className="font-mono text-[10px] text-[var(--muted)]">—</span>;
+  }
+  if (diff > 0) {
+    return (
+      <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400">
+        ▲{diff}
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono text-[10px] text-red-600 dark:text-red-400">
+      ▼{-diff}
+    </span>
+  );
+}
+
+function RepeatRateCard({
+  repeatRate,
+}: {
+  repeatRate: Awaited<ReturnType<typeof getRepeatRate>>;
+}) {
+  const MIN_PLAYS = 20;
+  if (repeatRate.totalPlays < MIN_PLAYS) {
+    return (
+      <SectionCard title="Repeat rate">
+        <p className="text-sm text-[var(--muted)]">
+          Need at least {MIN_PLAYS} plays in the last 7 days to compute — currently{" "}
+          {repeatRate.totalPlays}.
+        </p>
+      </SectionCard>
+    );
+  }
+
+  const pct = Math.round((repeatRate.rate ?? 0) * 100);
+  return (
+    <SectionCard title="Repeat rate">
+      <div className="flex items-baseline gap-3">
+        <span className="text-4xl font-semibold tracking-tight">{pct}%</span>
+        <span className="text-sm text-[var(--muted)]">
+          of your last 7 days were repeat listens
+        </span>
+      </div>
+      <p className="mt-2 font-mono text-xs text-[var(--muted)]">
+        {repeatRate.repeatPlays} / {repeatRate.totalPlays} plays matched tracks from the prior 7 days
+      </p>
+    </SectionCard>
+  );
+}
+
+function DiscoveryRateCard({
+  discoveryRate,
+}: {
+  discoveryRate: Awaited<ReturnType<typeof getDiscoveryRate>>;
+}) {
+  const MIN_PLAYS = 20;
+  if (discoveryRate.totalPlays < MIN_PLAYS) {
+    return (
+      <SectionCard title="Discovery rate">
+        <p className="text-sm text-[var(--muted)]">
+          Need at least {MIN_PLAYS} plays in the last 7 days to compute — currently{" "}
+          {discoveryRate.totalPlays}.
+        </p>
+      </SectionCard>
+    );
+  }
+
+  const pct = Math.round((discoveryRate.rate ?? 0) * 100);
+  return (
+    <SectionCard title="Discovery rate">
+      <div className="flex items-baseline gap-3">
+        <span className="text-4xl font-semibold tracking-tight">{pct}%</span>
+        <span className="text-sm text-[var(--muted)]">
+          of your last 7 days featured a new artist
+        </span>
+      </div>
+      <p className="mt-2 font-mono text-xs text-[var(--muted)]">
+        {discoveryRate.newArtistPlays} / {discoveryRate.totalPlays} plays had an artist not heard the prior 7 days
+      </p>
     </SectionCard>
   );
 }

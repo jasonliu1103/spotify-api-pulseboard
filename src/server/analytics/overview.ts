@@ -4,10 +4,6 @@ import type { DashboardWindow } from "@/components/dashboard/time-range-tabs";
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
-function sevenDaysAgo(): Date {
-  return new Date(Date.now() - SEVEN_DAYS_MS);
-}
-
 function isSpotifyRange(window: DashboardWindow): window is SpotifyTimeRange {
   return window !== "last_7_days";
 }
@@ -32,15 +28,32 @@ async function getTopArtistsFromSnapshots(
   const snapshotAt = await getLatestSnapshotAt(userId, timeRange);
   if (!snapshotAt) return [];
 
-  const rows = await prisma.userTopArtistSnapshot.findMany({
-    where: { userId, timeRange, snapshotAt },
-    orderBy: { rank: "asc" },
-    take: limit,
-    include: { artist: true },
+  const priorSnapshot = await prisma.userTopArtistSnapshot.findFirst({
+    where: { userId, timeRange, snapshotAt: { lt: snapshotAt } },
+    orderBy: { snapshotAt: "desc" },
+    select: { snapshotAt: true },
   });
+
+  const [rows, priorRows] = await Promise.all([
+    prisma.userTopArtistSnapshot.findMany({
+      where: { userId, timeRange, snapshotAt },
+      orderBy: { rank: "asc" },
+      take: limit,
+      include: { artist: true },
+    }),
+    priorSnapshot
+      ? prisma.userTopArtistSnapshot.findMany({
+          where: { userId, timeRange, snapshotAt: priorSnapshot.snapshotAt },
+          select: { artistId: true, rank: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const priorRankById = new Map(priorRows.map((r) => [r.artistId, r.rank]));
 
   return rows.map((row) => ({
     rank: row.rank,
+    previousRank: priorRankById.get(row.artistId) ?? null,
     id: row.artist.id,
     spotifyArtistId: row.artist.spotifyArtistId,
     name: row.artist.name,
@@ -51,19 +64,38 @@ async function getTopArtistsFromSnapshots(
 }
 
 async function getTopArtistsFromEvents(userId: string, limit: number) {
-  const events = await prisma.recentlyPlayedEvent.findMany({
-    where: { userId, playedAt: { gte: sevenDaysAgo() } },
-    select: {
-      track: {
-        select: {
-          artists: {
-            orderBy: { position: "asc" },
-            select: { artist: true },
+  const now = Date.now();
+  const currentStart = new Date(now - SEVEN_DAYS_MS);
+  const priorStart = new Date(now - 2 * SEVEN_DAYS_MS);
+
+  const [events, priorEvents] = await Promise.all([
+    prisma.recentlyPlayedEvent.findMany({
+      where: { userId, playedAt: { gte: currentStart } },
+      select: {
+        track: {
+          select: {
+            artists: {
+              orderBy: { position: "asc" },
+              select: { artist: true },
+            },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.recentlyPlayedEvent.findMany({
+      where: { userId, playedAt: { gte: priorStart, lt: currentStart } },
+      select: {
+        track: {
+          select: {
+            artists: {
+              orderBy: { position: "asc" },
+              select: { artistId: true },
+            },
+          },
+        },
+      },
+    }),
+  ]);
 
   const counts = new Map<string, { plays: number; artist: typeof events[number]["track"]["artists"][number]["artist"] }>();
   for (const event of events) {
@@ -74,11 +106,23 @@ async function getTopArtistsFromEvents(userId: string, limit: number) {
     }
   }
 
+  const priorCounts = new Map<string, number>();
+  for (const event of priorEvents) {
+    for (const ta of event.track.artists) {
+      priorCounts.set(ta.artistId, (priorCounts.get(ta.artistId) ?? 0) + 1);
+    }
+  }
+  const priorRankById = new Map<string, number>();
+  [...priorCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([artistId], i) => priorRankById.set(artistId, i + 1));
+
   return [...counts.values()]
     .sort((a, b) => b.plays - a.plays)
     .slice(0, limit)
     .map((entry, i) => ({
       rank: i + 1,
+      previousRank: priorRankById.get(entry.artist.id) ?? null,
       id: entry.artist.id,
       spotifyArtistId: entry.artist.spotifyArtistId,
       name: entry.artist.name,
@@ -113,25 +157,42 @@ async function getTopTracksFromSnapshots(
     .then((row) => row?.snapshotAt ?? null);
   if (!snapshotAt) return [];
 
-  const rows = await prisma.userTopTrackSnapshot.findMany({
-    where: { userId, timeRange, snapshotAt },
-    orderBy: { rank: "asc" },
-    take: limit,
-    include: {
-      track: {
-        include: {
-          album: true,
-          artists: {
-            orderBy: { position: "asc" },
-            include: { artist: true },
+  const priorSnapshot = await prisma.userTopTrackSnapshot.findFirst({
+    where: { userId, timeRange, snapshotAt: { lt: snapshotAt } },
+    orderBy: { snapshotAt: "desc" },
+    select: { snapshotAt: true },
+  });
+
+  const [rows, priorRows] = await Promise.all([
+    prisma.userTopTrackSnapshot.findMany({
+      where: { userId, timeRange, snapshotAt },
+      orderBy: { rank: "asc" },
+      take: limit,
+      include: {
+        track: {
+          include: {
+            album: true,
+            artists: {
+              orderBy: { position: "asc" },
+              include: { artist: true },
+            },
           },
         },
       },
-    },
-  });
+    }),
+    priorSnapshot
+      ? prisma.userTopTrackSnapshot.findMany({
+          where: { userId, timeRange, snapshotAt: priorSnapshot.snapshotAt },
+          select: { trackId: true, rank: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const priorRankById = new Map(priorRows.map((r) => [r.trackId, r.rank]));
 
   return rows.map((row) => ({
     rank: row.rank,
+    previousRank: priorRankById.get(row.trackId) ?? null,
     id: row.track.id,
     spotifyTrackId: row.track.spotifyTrackId,
     name: row.track.name,
@@ -146,15 +207,30 @@ async function getTopTracksFromSnapshots(
 }
 
 async function getTopTracksFromEvents(userId: string, limit: number) {
-  const grouped = await prisma.recentlyPlayedEvent.groupBy({
-    by: ["trackId"],
-    where: { userId, playedAt: { gte: sevenDaysAgo() } },
-    _count: { trackId: true },
-    orderBy: { _count: { trackId: "desc" } },
-    take: limit,
-  });
+  const now = Date.now();
+  const currentStart = new Date(now - SEVEN_DAYS_MS);
+  const priorStart = new Date(now - 2 * SEVEN_DAYS_MS);
+
+  const [grouped, priorGrouped] = await Promise.all([
+    prisma.recentlyPlayedEvent.groupBy({
+      by: ["trackId"],
+      where: { userId, playedAt: { gte: currentStart } },
+      _count: { trackId: true },
+      orderBy: { _count: { trackId: "desc" } },
+      take: limit,
+    }),
+    prisma.recentlyPlayedEvent.groupBy({
+      by: ["trackId"],
+      where: { userId, playedAt: { gte: priorStart, lt: currentStart } },
+      _count: { trackId: true },
+      orderBy: { _count: { trackId: "desc" } },
+    }),
+  ]);
 
   if (grouped.length === 0) return [];
+
+  const priorRankById = new Map<string, number>();
+  priorGrouped.forEach((g, i) => priorRankById.set(g.trackId, i + 1));
 
   const tracks = await prisma.track.findMany({
     where: { id: { in: grouped.map((g) => g.trackId) } },
@@ -174,6 +250,7 @@ async function getTopTracksFromEvents(userId: string, limit: number) {
       if (!track) return null;
       return {
         rank: i + 1,
+        previousRank: priorRankById.get(g.trackId) ?? null,
         id: track.id,
         spotifyTrackId: track.spotifyTrackId,
         name: track.name,
@@ -260,6 +337,92 @@ export async function getRecentlyPlayed(userId: string, limit = 10) {
       name: ta.artist.name,
     })),
   }));
+}
+
+export interface RepeatRate {
+  totalPlays: number;
+  repeatPlays: number;
+  rate: number | null;
+}
+
+export async function getRepeatRate(userId: string): Promise<RepeatRate> {
+  const now = Date.now();
+  const currentStart = new Date(now - SEVEN_DAYS_MS);
+  const priorStart = new Date(now - 2 * SEVEN_DAYS_MS);
+
+  const [currentPlays, priorPlays] = await Promise.all([
+    prisma.recentlyPlayedEvent.findMany({
+      where: { userId, playedAt: { gte: currentStart } },
+      select: { trackId: true },
+    }),
+    prisma.recentlyPlayedEvent.findMany({
+      where: { userId, playedAt: { gte: priorStart, lt: currentStart } },
+      select: { trackId: true },
+    }),
+  ]);
+
+  const priorTrackIds = new Set(priorPlays.map((p) => p.trackId));
+  const repeatPlays = currentPlays.reduce(
+    (sum, p) => (priorTrackIds.has(p.trackId) ? sum + 1 : sum),
+    0,
+  );
+
+  return {
+    totalPlays: currentPlays.length,
+    repeatPlays,
+    rate: currentPlays.length > 0 ? repeatPlays / currentPlays.length : null,
+  };
+}
+
+export interface DiscoveryRate {
+  totalPlays: number;
+  newArtistPlays: number;
+  rate: number | null;
+}
+
+export async function getDiscoveryRate(userId: string): Promise<DiscoveryRate> {
+  const now = Date.now();
+  const currentStart = new Date(now - SEVEN_DAYS_MS);
+  const priorStart = new Date(now - 2 * SEVEN_DAYS_MS);
+
+  const [currentPlays, priorPlays] = await Promise.all([
+    prisma.recentlyPlayedEvent.findMany({
+      where: { userId, playedAt: { gte: currentStart } },
+      select: {
+        track: {
+          select: {
+            artists: { select: { artistId: true } },
+          },
+        },
+      },
+    }),
+    prisma.recentlyPlayedEvent.findMany({
+      where: { userId, playedAt: { gte: priorStart, lt: currentStart } },
+      select: {
+        track: {
+          select: {
+            artists: { select: { artistId: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const priorArtistIds = new Set<string>();
+  for (const p of priorPlays) {
+    for (const ta of p.track.artists) priorArtistIds.add(ta.artistId);
+  }
+
+  const newArtistPlays = currentPlays.reduce((sum, p) => {
+    const anyNew = p.track.artists.some((ta) => !priorArtistIds.has(ta.artistId));
+    return anyNew ? sum + 1 : sum;
+  }, 0);
+
+  return {
+    totalPlays: currentPlays.length,
+    newArtistPlays,
+    rate: currentPlays.length > 0 ? newArtistPlays / currentPlays.length : null,
+  };
 }
 
 export async function getPlaylists(userId: string, limit = 50) {
